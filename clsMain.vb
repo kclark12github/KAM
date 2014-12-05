@@ -5,6 +5,7 @@
     Private mConnection As SqlClient.SqlConnection
     Private mDA As SqlClient.SqlDataAdapter
     Private mReader As StreamReader
+    Private mWriter As StreamWriter
     Private mTransaction As SqlClient.SqlTransaction
     Public Sub New()
         MyBase.New()
@@ -122,7 +123,148 @@
         End With
     End Function
 #End Region
+#Region "New Code"
+    ''' <summary>Parses a given string by delimiter</summary>
+    ''' <param name="Source">String to work on</param>
+    ''' <param name="Delimiter">Token delimiter</param>
+    ''' <param name="Encapsulator">Optional: Allows for tokens to return strings encapsulated with "Delimiter" characters</param>
+    ''' <returns>Returns string array</returns>
+    Public Overloads Function ParseStr(Source As String, Delimiter As String, Optional ByVal Encapsulator As String = "") As String()
+        Dim delim As String = Delimiter
+        ParseStr = New String() {}
+        If IsNothing(Source) OrElse Source.Length = 0 Then Throw New ArgumentException("Work string must be specified.")
+        If IsNothing(Delimiter) OrElse Delimiter = "" Then Throw New ArgumentException("Delimiter must be specified.")
+        If IsNothing(Encapsulator) Then Encapsulator = ""
 
+        If Delimiter.Length > 1 OrElse (Encapsulator.Length > 0 AndAlso Source.IndexOf(Encapsulator) > -1) Then
+            'Strategy: Replace all occurrences of Delimiter (not encapsulated by Encapsulator) with a
+            '          substitute delimiter which can be later used in a String.Split operation.
+            Dim cntEncap As Integer = 0
+            delim = Chr(1)
+            Dim sPos As Integer = 0
+            While sPos < Source.Length
+                If sPos + Encapsulator.Length < Source.Length AndAlso Source.Substring(sPos, Encapsulator.Length) = Encapsulator Then
+                    cntEncap += 1 : sPos += Encapsulator.Length
+                ElseIf sPos + Delimiter.Length < Source.Length AndAlso Source.Substring(sPos, Delimiter.Length) = Delimiter AndAlso cntEncap Mod 2 = 0 Then
+                    Source = String.Format("{0}{1}{2}", Source.Substring(0, sPos), delim, Source.Substring(sPos + Delimiter.Length)) : sPos += delim.Length
+                Else
+                    sPos += 1
+                End If
+            End While
+        End If
+        Return Source.Split(delim)
+    End Function
+    ''' <summary>Retrieve specified token of string</summary>
+    ''' <param name="Source">String to work on</param>
+    ''' <param name="TokenNum">Returns specified token in string</param>
+    ''' <param name="Delimiter">Token delimiter</param>
+    ''' <param name="Encapsulator">Optional: Allows for tokens to return strings encapsulated with "Delimiter" characters</param>
+    ''' <param name="Preserve">Optional: Preserves encapsulating characters when token is encapsulated</param>
+    ''' <returns>Returns string token.  If none is found, will return ""</returns>
+    Public Overloads Function ParseStr(Source As String, TokenNum As Integer, Delimiter As String, Optional ByVal Encapsulator As String = "", Optional Preserve As Boolean = False) As String
+        ParseStr = ""
+        If TokenNum < 1 Then Throw New ArgumentException("TokenNum must be greater than zero.")
+        Dim Tokens() As String = Me.ParseStr(Source, Delimiter, Encapsulator)
+        If TokenNum <= Tokens.Length Then ParseStr = Tokens(TokenNum - 1)
+        If Not Preserve AndAlso Encapsulator.Length > 0 AndAlso ParseStr.StartsWith(Encapsulator) AndAlso ParseStr.EndsWith(Encapsulator) Then ParseStr = ParseStr.Substring(1, ParseStr.Length - 2)
+    End Function
+    ''' <summary>Retrieve specified token of string</summary>
+    ''' <param name="strWork">String to work on</param>
+    ''' <param name="intTokenNum">Returns specified token in string</param>
+    ''' <param name="strDelimitChr">Token delimiter</param>
+    ''' <param name="strEncapChr">Optional: Allows for tokens to return strings encapsulated with "strDelimitChr" characters</param>
+    ''' <returns>Returns string token.  If none is found, will return ""</returns>
+    Public Overloads Function OldParseStr(ByVal strWork As String, ByVal intTokenNum As Short, ByVal strDelimitChr As String, Optional ByVal strEncapChr As String = "") As String
+        Dim intSPos As Integer = 0                'Start Position
+        Dim intDPos As Integer = 0                'Delimiter Position
+        Dim intSPtr As Integer = 0                'Start Pointer
+        Dim intEPtr As Integer = 0                'End Pointer
+
+        OldParseStr = ""
+        If IsNothing(strWork) OrElse strWork = "" Then Throw New ArgumentException("Work string must be specified.")
+        If intTokenNum <= 0 Then Throw New ArgumentException("TokenNum must be greater than zero.")
+        If IsNothing(strDelimitChr) OrElse strDelimitChr = "" Then Throw New ArgumentException("Delimiter must be specified.")
+        If IsNothing(strEncapChr) Then strEncapChr = ""
+
+        Dim intCurrentTokenNum As Short = 0S
+        Dim intWorkStrLen As Integer = strWork.Length
+        Dim intEncapStatus As Boolean = CBool(strEncapChr.Length > 0)
+        Dim intDelimitLen As Integer = strDelimitChr.Length
+        If intWorkStrLen = 0 Or intSPos > intWorkStrLen Then Exit Function
+
+        Dim strTemp As String = ""
+        While True
+            strTemp = ""
+            If intSPos > intWorkStrLen Then Exit While
+            intDPos = strWork.IndexOf(strDelimitChr, intSPos) 'intDPos = InStr(intSPos, strWork, strDelimitChr)
+            If intEncapStatus Then
+                intSPtr = strWork.IndexOf(strEncapChr, intSPos) 'intSPtr = InStr(intSPos, strWork, strEncapChr)
+                intEPtr = strWork.IndexOf(strEncapChr, intSPtr + 1) 'intEPtr = InStr(intSPtr + 1, strWork, strEncapChr)
+                If intDPos > intSPtr And intDPos < intEPtr Then intDPos = strWork.IndexOf(strDelimitChr, intEPtr) 'intDPos = InStr(intEPtr, strWork, strDelimitChr)
+            End If
+
+            If intDPos < intSPos Then intDPos = intWorkStrLen + intDelimitLen
+
+            If intDPos <= 0 Then Exit While
+            strTemp = strWork.Substring(intSPos, Math.Min(strWork.Length - intSPos, intDPos - intSPos)) 'strTemp = Mid(strWork, intSPos, intDPos - intSPos)
+            intSPos = intDPos + intDelimitLen
+            intCurrentTokenNum += 1 : If intCurrentTokenNum = intTokenNum Then Exit While
+        End While
+        If intEncapStatus Then
+            'ParseStr = ReplaceCS(strTemp, strEncapChr, "", OpMode.StringBinaryCompare)
+            If strTemp.StartsWith(strEncapChr) AndAlso strTemp.EndsWith(strEncapChr) Then strTemp = strTemp.Substring(1, strTemp.Length - 2)
+        End If
+        OldParseStr = strTemp
+    End Function
+    ''' <summary>Counts number of tokens in a string</summary>
+    ''' <param name="Source">String to work on</param>
+    ''' <param name="Delimiter">String Delimiter</param>
+    ''' <param name="Encapsulator">Optional: Allows for tokens to return strings encapsulated with "strDelimiter" characters</param>
+    ''' <returns>Number of tokens found</returns>
+    Public Overloads Function TokenCount(ByVal Source As String, ByVal Delimiter As String, Optional ByVal Encapsulator As String = "") As Integer
+        TokenCount = 0
+        If IsNothing(Source) OrElse Source.Length = 0 Then Exit Function
+        If IsNothing(Delimiter) OrElse Delimiter = "" Then Exit Function
+        If IsNothing(Encapsulator) Then Encapsulator = ""
+
+        Dim Tokens() As String = Me.ParseStr(Source, Delimiter, Encapsulator)
+        TokenCount = Tokens.Length
+        For i As Integer = Tokens.GetUpperBound(0) To 0 Step -1
+            If Tokens(i).Length = 0 Then TokenCount -= 1 Else Exit For
+        Next i
+    End Function
+    Public Function OldTokenCount(ByVal strWork As String, ByVal strDelimiter As String, Optional ByVal strEncapChr As String = "") As Integer
+        Dim intDPos As Integer                'Delimiter Position
+        Dim intSPtr As Integer                'Start Pointer
+        Dim intEPtr As Integer                'End Pointer
+        Dim intWorkStrLen As Integer = Len(strWork)
+        Dim intEncapStatus As Integer
+        Dim intSPos As Integer = 1            'Start Position
+        Dim strTemp As String = ""
+        Dim intDelimitLen As Integer = Len(strDelimiter)
+        OldTokenCount = 0
+        If Len(strEncapChr) Then intEncapStatus = Len(strEncapChr)
+        If intWorkStrLen = 0 Or intSPos > intWorkStrLen Then Exit Function 'Try
+
+        While True
+            strTemp = ""
+            If intSPos > intWorkStrLen Then Exit While
+            intDPos = InStr(intSPos, strWork, strDelimiter)
+            If intEncapStatus Then
+                intSPtr = InStr(intSPos, strWork, strEncapChr)
+                intEPtr = InStr(intSPtr + 1, strWork, strEncapChr)
+                If intDPos > intSPtr And intDPos < intEPtr Then intDPos = InStr(intEPtr, strWork, strDelimiter)
+            End If
+
+            If intDPos < intSPos Then intDPos = intWorkStrLen + intDelimitLen
+
+            If intDPos = 0 Then Exit While
+            strTemp = Mid(strWork, intSPos, intDPos - intSPos)
+            intSPos = intDPos + intDelimitLen
+            OldTokenCount += 1
+        End While
+    End Function
+#End Region
     Private Function AddKey(root As String, name As String) As Integer
         AddKey = Me.GetKey(name) : If AddKey > 0 Then Exit Function
         Dim SQL As String = String.Format("Insert Into [Key]([root],[name]) Values('{0}','{1}');", root, name.Replace("'", "''"))
@@ -160,32 +302,23 @@
         GetKey = ExecuteScalarCommand(SQL)
     End Function
     Public Function ParseString(Source As String, Token As Integer, Delimiter As String, Optional ByVal Encapsulator As String = "") As String
+        Dim Tokens() As String
+        Dim delim As String = Delimiter
         ParseString = ""
-        Try
-            If Source.Length = 0 Then Exit Try
-            If Token <= 0 Then Throw New ArgumentException("Token must be at least One.")
-            Dim sPos As Integer = 0 'Start Position
-            Dim strTemp As String = ""
-            Dim iToken As Integer = 0
-            While True
-                strTemp = ""
-                If sPos > Source.Length - 1 Then Exit While
-                Dim dPos As Integer = Source.IndexOf(Delimiter, sPos) 'Delimiter Position
-                If Encapsulator.Length > 0 Then
-                    Dim sPtr As Integer = Source.IndexOf(Encapsulator, sPos) 'Start Pointer
-                    Dim ePtr As Integer = Source.IndexOf(Encapsulator, sPtr + 1) 'End Pointer
-                    If dPos > sPtr And dPos < ePtr Then dPos = Source.IndexOf(Delimiter, ePtr)
-                End If
-                If dPos < sPos Then dPos = Source.Length + Delimiter.Length
-                If dPos = 0 Then Exit While
-                strTemp = Source.Substring(sPos, dPos - sPos)
-                sPos = dPos + Delimiter.Length
-                iToken += 1 : If iToken = Token Then Exit While
-            End While
-            If Encapsulator.Length > 0 AndAlso strTemp.StartsWith(Encapsulator) AndAlso strTemp.EndsWith(Encapsulator) Then strTemp = strTemp.Substring(1, strTemp.Length - 2)
-            ParseString = strTemp
-        Finally
-        End Try
+        If Source.Length = 0 OrElse Token < 1 Then Exit Function
+        If Source.IndexOf(Encapsulator) > -1 Then
+            'Before getting started, check for escaped encapsulating characters...
+            Source = Source.Replace(String.Format("\{0}", Encapsulator), String.Format("{0}", Encapsulator)) 'Should work for embedded double-quotes anyway...
+            Dim cntEncap As Integer = 0
+            delim = Chr(1)
+            For i As Integer = 0 To Source.Length - 1
+                Select Case Source.Substring(i, 1)
+                    Case Encapsulator : cntEncap += 1
+                    Case Delimiter : If cntEncap Mod 2 = 0 Then Mid(Source, i + 1, 1) = delim 'Cannot use .Substring to assign value
+                End Select
+            Next i
+        End If
+        Tokens = Source.Split(delim) : If Token <= Tokens.Length Then ParseString = Tokens(Token - 1)
     End Function
     Private Sub UpdateKey(id As Integer, raw As String)
         Dim SQL As String = String.Format("Update [Key] Set [raw]='{1}' Where [id]={0};", id, raw.Replace("'", "''"))
@@ -199,12 +332,45 @@
         ExecuteScalarCommand(SQL)
         CommitTrans()
     End Sub
+    Public Sub OutputFile(FileName As String)
+        Try
+            Dim SQL As String = _
+                "Select [Key].[name],[Key].[raw],[Value].[name],[Value].[value] " & _
+                "From [Key] " & _
+                    "Inner Join [Value] On [Value].[key]=[Key].[id] " & _
+                "Where Lower([Key].[name]) Like '%adobe%' " & _
+                    "Or Lower([Value].[name]) Like '%adobe%' " & _
+                    "Or Lower([Value].[value]) Like '%adobe%' " & _
+                    "Or Lower([Key].[name]) Like '%{6d4b8b88-427d-4363-a533-020c624e4ad1}%' " & _
+                    "Or Lower([Key].[name]) Like '%{ac76ba86-7ad7-1033-7b44-aa1000000001}%' " & _
+                    "Or Lower([Key].[name]) Like '%{dc6efb56-9cfa-464d-8880-44885d7dc193}%' " & _
+                    "Or Lower([Key].[name]) Like '%68ab67ca7da73301b744aa0100000010%' " & _
+                "Order By [Key].[name]; "
+            Dim ds As DataSet = OpenDataSet(SQL)
+            mWriter = My.Computer.FileSystem.OpenTextFileWriter(FileName, False, System.Text.Encoding.Unicode)
+            mWriter.WriteLine("Windows Registry Editor Version 5.00" & vbCrLf)
+            For iRow As Integer = 0 To ds.Tables(0).DefaultView.Count - 1
+                Dim drv As DataRowView = ds.Tables(0).DefaultView(iRow)
+                Dim KeyName As String = drv(0)
+                Dim KeyTokenCount = TokenCount(KeyName, "\")
+                If KeyTokenCount > 2 Then
+                    Dim tmpKeyName As String = String.Format("{0}\", ParseStr(KeyName, 1, "\"))
+                    For i As Integer = 2 To KeyTokenCount - 1
+                        tmpKeyName &= String.Format("{0}\", ParseStr(KeyName, i, "\"))
+                        mWriter.WriteLine(String.Format("[{0}]{1}", tmpKeyName, vbCrLf))
+                    Next i
+                End If
+                mWriter.WriteLine(drv(1) & vbCrLf)
+            Next iRow
+        Finally
+            If Not IsNothing(mWriter) Then mWriter.Close() : mWriter = Nothing
+        End Try
+    End Sub
     Public Sub ProcessFile(FileName As String)
         Dim key As String = ""
         Dim keyID As Integer = 0
         Dim root As String = ""
         Dim raw As String = ""
-
         Try
             mReader = My.Computer.FileSystem.OpenTextFileReader(FileName, System.Text.Encoding.Unicode)
             While Not mReader.EndOfStream
@@ -225,13 +391,10 @@
                             raw = buffer
                         Case Else
                             raw = String.Format("{0}{1}{2}", raw, vbCrLf, buffer)
-                            'TODO: We're not handling embedded quotes properly by using .Split("=")...
-                            Dim valuePath() As String = buffer.Split("=")
-                            Dim valueName As String = valuePath(0)
-                            Dim valueValue As String = DecodeValue(valuePath(1), raw)    'Note: DecodeValue will update raw...
+                            Dim valueName As String = ParseString(buffer, 1, "=", """")
+                            Dim valueValue As String = DecodeValue(ParseString(buffer, 2, "=", """"), raw)    'Note: DecodeValue will update raw...
                             AddValue(keyID, valueName, valueValue)
                     End Select
-                Catch ex As IndexOutOfRangeException
                 Finally
                 End Try
             End While
